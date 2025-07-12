@@ -89,22 +89,63 @@ pipeline {
                 GIT_REPO_NAME = "End-to-End-Kubernetes-Three-Tier-DevSecOps-Project"
                 GIT_USER_NAME = "thegagankapoor"
             }
-            steps {
-                dir('Kubernetes-Manifests-file/Backend') {
-                    withCredentials([string(credentialsId: 'github', variable: 'GITHUB_TOKEN')]) {
-                        sh '''
-                            git config user.email "gagankapoorr@gmail.com"
-                            git config user.name "thegagankapoor"
-                            BUILD_NUMBER=${BUILD_NUMBER}
-                            echo $BUILD_NUMBER
-                            imageTag=$(grep -oP '(?<=backend:)[^ ]+' deployment.yaml)
-                            echo $imageTag
-                            sed -i "s/${AWS_ECR_REPO_NAME}:${imageTag}/${AWS_ECR_REPO_NAME}:${BUILD_NUMBER}/" deployment.yaml
-                            git add deployment.yaml
-                            git commit -m "Update deployment Image to version \${BUILD_NUMBER}"
-                            git push https://${GITHUB_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME} HEAD:master
-                        '''
-                    }
+           steps {
+    dir('Kubernetes-Manifests-file/Backend') {
+        withCredentials([string(credentialsId: 'github', variable: 'GITHUB_TOKEN')]) {
+            sh '''
+                git config user.email "gagankapoorr@gmail.com"
+                git config user.name "thegagankapoor"
+                BUILD_NUMBER=${BUILD_NUMBER}
+                echo "Build Number: $BUILD_NUMBER"
+                
+                # Check if deployment.yaml exists
+                if [ ! -f deployment.yaml ]; then
+                    echo "deployment.yaml not found!"
+                    ls -la
+                    exit 1
+                fi
+                
+                echo "Current deployment.yaml content:"
+                cat deployment.yaml
+                echo "=========================="
+                
+                # Set bash to not exit on command failure temporarily
+                set +e
+                
+                # Try to extract current image tag
+                imageTag=$(grep -oP "(?<=${AWS_ECR_REPO_NAME}:)[^ ,\\]]+" deployment.yaml 2>/dev/null)
+                grep_exit_code=$?
+                
+                # Re-enable exit on error
+                set -e
+                
+                if [ $grep_exit_code -eq 0 ] && [ -n "$imageTag" ]; then
+                    echo "Found current imageTag: $imageTag"
+                    # Replace specific tag
+                    sed -i "s|${AWS_ECR_REPO_NAME}:${imageTag}|${AWS_ECR_REPO_NAME}:${BUILD_NUMBER}|g" deployment.yaml
+                else
+                    echo "Could not find specific imageTag, doing general replacement"
+                    # Replace any tag after the repo name
+                    sed -i "s|${AWS_ECR_REPO_NAME}:[^[:space:]]*|${AWS_ECR_REPO_NAME}:${BUILD_NUMBER}|g" deployment.yaml
+                fi
+                
+                echo "Updated deployment.yaml content:"
+                cat deployment.yaml
+                echo "=========================="
+                
+                # Check if any changes were made
+                if git diff --quiet deployment.yaml; then
+                    echo "No changes were made to deployment.yaml"
+                    echo "This might indicate the image reference wasn't found or replaced"
+                    exit 1
+                else
+                    echo "Changes detected, committing..."
+                    git add deployment.yaml
+                    git commit -m "Update deployment Image to version ${BUILD_NUMBER}"
+                    git push https://${GITHUB_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME} HEAD:master
+                fi
+            '''
+        }
                 }
             }
         }
